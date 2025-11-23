@@ -34,15 +34,24 @@ if uploaded_file:
     detections = face_net.forward()
 
     results_text = []
+    face_count = 0
 
     for i in range(detections.shape[2]):
         confidence = detections[0,0,i,2]
-        if confidence > 0.5:
+        if confidence > 0.3:  # Lower threshold
+            face_count += 1
             box = detections[0,0,i,3:7] * np.array([w,h,w,h])
             x1, y1, x2, y2 = box.astype("int")
 
+            # Add padding to include mask region
+            pad = 20
+            x1 = max(0, x1 - pad)
+            y1 = max(0, y1 - pad)
+            x2 = min(w, x2 + pad)
+            y2 = min(h, y2 + pad)
+
             face = frame[y1:y2, x1:x2]
-            if face.size == 0: 
+            if face.size == 0:
                 continue
 
             face_img = cv2.resize(face, (224,224))
@@ -51,18 +60,24 @@ if uploaded_file:
 
             preds = session.run(None, {input_name: face_img})[0][0]
             idx = int(np.argmax(preds))
+            conf = preds[idx] * 100
 
-            label = labels[idx]
+            label = f"{labels[idx]} ({conf:.1f}%)"
             color = colors[idx]
 
-            results_text.append(f"Face {i+1}: **{label}**")
+            results_text.append(f"Face {face_count}: **{label}**")
 
             cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
-            cv2.putText(frame, label, (x1,y1-10),
+            cv2.putText(frame, labels[idx], (x1,y1-10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
     st.subheader("Prediction Results")
-    for r in results_text:
-        st.markdown(r)
+
+    if not results_text:
+        st.warning("⚠ No face detected. Try a clearer image.")
+    else:
+        for r in results_text:
+            st.markdown(r)
 
     st.image(frame, caption="Detection Result", use_column_width=True)
+
