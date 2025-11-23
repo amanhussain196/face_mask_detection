@@ -1,6 +1,6 @@
 streamlit==1.40.0
-onnxruntime==1.19.2
-numpy==2.0.2
 opencv-python-headless==4.10.0.84
+tensorflow==2.17.1
 Pillow==10.4.0
+numpy==1.26.4
 protobuf==4.25.3
