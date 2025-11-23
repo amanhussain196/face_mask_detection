@@ -1,0 +1,12 @@
+{
+  "class_names": [
+    "mask_weared_incorrect",
+    "with_mask",
+    "without_mask"
+  ],
+  "friendly_labels": {
+    "with_mask": "😷 Wearing Mask",
+    "without_mask": "❌ Not Wearing Mask",
+    "mask_weared_incorrect": "⚠️ Incorrect Mask Position"
+  }
+}
