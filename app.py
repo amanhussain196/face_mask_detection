@@ -2,9 +2,10 @@ import streamlit as st
 import numpy as np
 import cv2
 from PIL import Image
-import tensorflow as tf
 import json
 import os
+
+from tflite_runtime.interpreter import Interpreter
 
 st.set_page_config(page_title="Face Mask Detector 😷", layout="centered")
 
@@ -12,12 +13,19 @@ st.set_page_config(page_title="Face Mask Detector 😷", layout="centered")
 
 @st.cache_resource
 def load_model_and_labels():
-    model = tf.keras.models.load_model("mask_detector_mobilenetv2.h5")
+    # Load TFLite model
+    interpreter = Interpreter(model_path="mask_detector.tflite")
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    # Load labels + friendly names
     with open("label_map.json", "r", encoding="utf-8") as f:
         meta = json.load(f)
     class_names = meta["class_names"]
     friendly_labels = meta["friendly_labels"]
-    return model, class_names, friendly_labels
+
+    return interpreter, input_details, output_details, class_names, friendly_labels
 
 
 @st.cache_resource
@@ -33,17 +41,26 @@ def load_face_detector():
 
 # ---------- UTILS ----------
 
-def preprocess_face(face_bgr, target_size=(224, 224)):
-    face_resized = cv2.resize(face_bgr, target_size)
+def preprocess_face(face_bgr, input_details):
+    """Resize + convert to float32, match TFLite input shape."""
+    # Assume (1, 224, 224, 3)
+    _, h, w, _ = input_details[0]["shape"]
+    face_resized = cv2.resize(face_bgr, (w, h))
     face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
-    face_rgb = face_rgb.astype("float32") / 255.0
-    return np.expand_dims(face_rgb, axis=0)
+
+    # Model was trained on 0-255 float inputs (Mobilenet preprocess inside graph)
+    face_array = face_rgb.astype("float32")
+
+    # Add batch dimension
+    return np.expand_dims(face_array, axis=0)
 
 
-def predict_faces(image_rgb, model, face_cascade, class_names, friendly_labels):
+def predict_faces(image_rgb, interpreter, input_details, output_details,
+                  class_names, friendly_labels):
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
+    face_cascade = load_face_detector()
     faces = face_cascade.detectMultiScale(
         gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
     )
@@ -60,8 +77,13 @@ def predict_faces(image_rgb, model, face_cascade, class_names, friendly_labels):
         if face_roi.size == 0:
             continue
 
-        inp = preprocess_face(face_roi)
-        preds = model.predict(inp, verbose=0)[0]
+        inp = preprocess_face(face_roi, input_details)
+
+        # Run TFLite inference
+        interpreter.set_tensor(input_details[0]["index"], inp)
+        interpreter.invoke()
+        preds = interpreter.get_tensor(output_details[0]["index"])[0]
+
         class_idx = int(np.argmax(preds))
         prob = float(preds[class_idx])
 
@@ -69,7 +91,6 @@ def predict_faces(image_rgb, model, face_cascade, class_names, friendly_labels):
         friendly = friendly_labels.get(class_name, class_name)
         color = COLORS.get(class_name, (255, 255, 255))
 
-        # draw box + label
         cv2.rectangle(image_bgr, (x, y), (x + w, y + h), color, 2)
         label_text = f"{friendly} ({prob:.2f})"
         cv2.putText(
@@ -91,7 +112,6 @@ def predict_faces(image_rgb, model, face_cascade, class_names, friendly_labels):
             }
         )
 
-    # back to RGB for display
     result_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     return result_rgb, detections
 
@@ -100,15 +120,13 @@ def predict_faces(image_rgb, model, face_cascade, class_names, friendly_labels):
 
 st.title("Face Mask Detection 😷")
 st.write(
-    "Upload an image or take a photo. "
-    "The app will detect faces and classify them as:\n"
+    "Upload an image or take a photo. The app will detect faces and classify them as:\n"
     "- 😷 Wearing Mask\n"
     "- ❌ Not Wearing Mask\n"
     "- ⚠️ Incorrect Mask Position"
 )
 
-model, class_names, friendly_labels = load_model_and_labels()
-face_cascade = load_face_detector()
+interpreter, input_details, output_details, class_names, friendly_labels = load_model_and_labels()
 
 mode = st.radio("Choose input source:", ["Upload image", "Use camera"])
 
@@ -130,7 +148,12 @@ if uploaded_file is not None:
     if st.button("Run detection"):
         with st.spinner("Analyzing image..."):
             result_img, detections = predict_faces(
-                image_np, model, face_cascade, class_names, friendly_labels
+                image_np,
+                interpreter,
+                input_details,
+                output_details,
+                class_names,
+                friendly_labels,
             )
 
         st.image(result_img, caption="Detection result", use_column_width=True)
