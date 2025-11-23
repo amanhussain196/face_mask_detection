@@ -1,60 +1,42 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
 from tensorflow.keras.models import load_model
+from PIL import Image
 
 st.set_page_config(page_title="Face Mask Detection")
 st.title("😷 Face Mask Detection")
 
+# Load mask detection model
+model = load_model("mask_detector_mobilenetv2.h5")
 
-model_path = "mask_detector_mobilenetv2.h5"
-face_path = "face_detector"
+# Load Haar face detector
+face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
-# Load Keras Model
-model = load_model(model_path)
-
-# Load face detector
-prototxt = f"{face_path}/deploy.prototxt"
-weights = f"{face_path}/res10_300x300_ssd_iter_140000.caffemodel"
-face_net = cv2.dnn.readNet(prototxt, weights)
-
-labels = ["Mask Incorrect", "With Mask", "Without Mask"]
+labels = ["Mask", "No Mask"]
 
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     frame = np.array(image)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    (h, w) = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(frame, 1.0, (300,300),
-                                 (104.0, 177.0, 123.0))
-    face_net.setInput(blob)
-    detections = face_net.forward()
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
-    for i in range(detections.shape[2]):
-        confidence = detections[0,0,i,2]
+    for (x, y, w, h) in faces:
+        face = frame[y:y+h, x:x+w]
+        face_img = cv2.resize(face, (224, 224))
+        face_img = face_img.astype("float32") / 255.0
+        face_img = np.expand_dims(face_img, axis=0)
 
-        if confidence > 0.5:
-            box = detections[0,0,i,3:7] * np.array([w,h,w,h])
-            x1, y1, x2, y2 = box.astype("int")
+        preds = model.predict(face_img)[0]
+        label_index = np.argmax(preds)
+        label = labels[label_index]
+        color = (0, 255, 0) if label_index == 0 else (0, 0, 255)
 
-            face = frame[y1:y2, x1:x2]
-            if face.size == 0:
-                continue
+        cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+        cv2.putText(frame, label, (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-            face_img = cv2.resize(face, (224,224))
-            face_img = face_img.astype("float32") / 255.0
-            face_img = np.expand_dims(face_img, axis=0)
-
-            preds = model.predict(face_img)[0]
-            label_idx = np.argmax(preds)
-            label = labels[label_idx]
-            color = (0,255,0) if label_idx == 1 else (0,0,255)
-
-            cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
-            cv2.putText(frame, label, (x1,y1-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-
-    st.image(frame, caption="Result", use_column_width=True)
+    st.image(frame, caption="Detection Result", use_column_width=True)
