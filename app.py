@@ -1,18 +1,18 @@
 import streamlit as st
 import cv2
 import numpy as np
-import onnxruntime as ort
 from PIL import Image
+from tensorflow.keras.models import load_model
 
 st.set_page_config(page_title="Face Mask Detection")
 st.title("😷 Face Mask Detection")
 
-model_path = "mask_detector.onnx"
+
+model_path = "mask_detector_mobilenetv2.h5"
 face_path = "face_detector"
 
-# Load ONNX model
-session = ort.InferenceSession(model_path)
-input_name = session.get_inputs()[0].name
+# Load Keras Model
+model = load_model(model_path)
 
 # Load face detector
 prototxt = f"{face_path}/deploy.prototxt"
@@ -41,13 +41,14 @@ if uploaded_file:
             x1, y1, x2, y2 = box.astype("int")
 
             face = frame[y1:y2, x1:x2]
-            if face.size == 0: continue
+            if face.size == 0:
+                continue
 
             face_img = cv2.resize(face, (224,224))
             face_img = face_img.astype("float32") / 255.0
             face_img = np.expand_dims(face_img, axis=0)
 
-            preds = session.run(None, {input_name: face_img})[0][0]
+            preds = model.predict(face_img)[0]
             label_idx = np.argmax(preds)
             label = labels[label_idx]
             color = (0,255,0) if label_idx == 1 else (0,0,255)
